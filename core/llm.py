@@ -200,14 +200,49 @@ def _provider() -> str:
     return (get("llm_provider") or os.getenv("LLM_PROVIDER") or "groq").lower()
 
 
+CURATED_GROQ = [
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "allam-2-7b",
+]
+
+_SKIP_MODELS = ("whisper", "prompt-guard", "compound", "orpheus", "tts", "guard")
+_model_cache: list[str] | None = None
+
+
 def _model() -> str:
     provider = _provider()
-    configured = get("llm_model") or ""
+    configured = (get("llm_model") or "").strip()
     if provider == "groq":
-        if not configured or configured.startswith("claude") or "llama-3.1" in configured:
-            return "qwen/qwen3.8-27b"
+        if not configured or configured.startswith("claude") or configured == "llama-3.1-8b-instant":
+            return CURATED_GROQ[0]
         return configured
     return configured or "claude-sonnet-4-20250514"
+
+
+def list_groq_models() -> list[str]:
+    """Chat-capable Groq model IDs, curated first."""
+    global _model_cache
+    if _model_cache:
+        return list(_model_cache)
+    ordered = list(CURATED_GROQ)
+    client, err = _client()
+    if client is None or _provider() != "groq":
+        _model_cache = ordered
+        return ordered
+    try:
+        for m in client.models.list().data:
+            mid = getattr(m, "id", "") or ""
+            low = mid.lower()
+            if not mid or any(s in low for s in _SKIP_MODELS):
+                continue
+            if mid not in ordered:
+                ordered.append(mid)
+    except Exception as e:
+        log.warning(f"Could not list Groq models: {e}")
+    _model_cache = ordered
+    return list(ordered)
 
 
 def _max_tokens() -> int:

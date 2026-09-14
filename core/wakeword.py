@@ -24,7 +24,10 @@ def set_root(root):
 
 def start():
     global _active, _thread
-    if not get("voice_enabled", True):
+    if _active:
+        return
+    if not get("mic_enabled", False):
+        log.info("Mic is off — wake word not started.")
         return
 
     _active = True

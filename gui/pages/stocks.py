@@ -1,40 +1,58 @@
 # gui/pages/stocks.py
 import threading
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
     QListWidget, QListWidgetItem, QTextEdit, QLabel,
 )
+from gui.pages.chart_view import MarketChart
 
 
 class _Sig(QObject):
     text = Signal(str)
     card = Signal(str, str)
+    chart = Signal(object)
 
 
 class StocksPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._symbol = "BTC-USD"
+        self._range = "5d"
         self._sig = _Sig()
         self._sig.text.connect(self._set_detail)
         self._sig.card.connect(self._set_card)
+        self._sig.chart.connect(self._set_chart)
         self._build()
+        self._timer = QTimer(self)
+        self._timer.setInterval(45000)
+        self._timer.timeout.connect(self._refresh_chart)
         self.refresh()
+        self.lookup()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._timer.start()
+        self._refresh_chart()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
 
     def _build(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(14)
+        root.setSpacing(12)
 
-        title = QLabel("Stocks")
+        title = QLabel("Market")
         title.setObjectName("Title")
         root.addWidget(title)
-        hint = QLabel("Look up a ticker, or ask Helion in chat for a take.")
+        hint = QLabel("Live chart and volume-at-price. Refreshes while this page is open.")
         hint.setObjectName("Eyebrow")
         root.addWidget(hint)
 
         bar = QHBoxLayout()
-        self._entry = QLineEdit()
+        self._entry = QLineEdit("BTC-USD")
         self._entry.setPlaceholderText("Symbol — AAPL, BTC-USD, RELIANCE.NS")
         self._entry.returnPressed.connect(self.lookup)
         bar.addWidget(self._entry, 1)
@@ -46,10 +64,6 @@ class StocksPage(QWidget):
         add.setObjectName("Action")
         add.clicked.connect(self.add_symbol)
         bar.addWidget(add)
-        ref = QPushButton("Refresh")
-        ref.setObjectName("Action")
-        ref.clicked.connect(self.refresh)
-        bar.addWidget(ref)
         root.addLayout(bar)
 
         chips = QHBoxLayout()
@@ -59,7 +73,15 @@ class StocksPage(QWidget):
             b.clicked.connect(lambda _=False, s=sym: self.quick(s))
             chips.addWidget(b)
         chips.addStretch(1)
+        for rng, lab in (("1d", "1D"), ("5d", "5D"), ("1mo", "1M")):
+            b = QPushButton(lab)
+            b.setObjectName("Action")
+            b.clicked.connect(lambda _=False, r=rng: self._set_range(r))
+            chips.addWidget(b)
         root.addLayout(chips)
+
+        self._chart = MarketChart()
+        root.addWidget(self._chart, 2)
 
         body = QHBoxLayout()
         left = QVBoxLayout()
@@ -76,9 +98,13 @@ class StocksPage(QWidget):
         self._detail = QTextEdit()
         self._detail.setObjectName("PageBody")
         self._detail.setReadOnly(True)
-        self._detail.setPlainText("Pick a ticker or look one up. Chat with Helion if you want a take on the numbers.")
+        self._detail.setMaximumHeight(140)
         body.addWidget(self._detail, 1)
         root.addLayout(body, 1)
+
+    def _set_range(self, rng: str):
+        self._range = rng
+        self._refresh_chart()
 
     def quick(self, symbol: str):
         self._entry.setText(symbol)
@@ -88,8 +114,30 @@ class StocksPage(QWidget):
         symbol = self._entry.text().strip().upper()
         if not symbol:
             return
+        self._symbol = symbol
         self._detail.setPlainText(f"Fetching {symbol}…")
         threading.Thread(target=self._fetch, args=(symbol,), daemon=True).start()
+        self._refresh_chart()
+
+    def _refresh_chart(self):
+        symbol = (self._entry.text() or self._symbol or "").strip().upper()
+        if not symbol:
+            return
+        rng = self._range
+        threading.Thread(target=self._fetch_chart, args=(symbol, rng), daemon=True).start()
+
+    def _fetch_chart(self, symbol, rng):
+        try:
+            from core.tools import get_chart_series
+            data = get_chart_series(symbol, rng)
+            self._sig.chart.emit(data)
+        except Exception as e:
+            self._sig.chart.emit({"bars": [], "error": str(e), "symbol": symbol})
+
+    def _set_chart(self, data):
+        if data and data.get("error") and not data.get("bars"):
+            self._detail.setPlainText(f"Chart unavailable: {data.get('error')}")
+        self._chart.set_data(data)
 
     def _fetch(self, symbol):
         from core.tools import _get_stock
@@ -133,6 +181,7 @@ class StocksPage(QWidget):
             it.setData(Qt.UserRole, sym)
             self._list.addItem(it)
             threading.Thread(target=self._fill_card, args=(sym,), daemon=True).start()
+        self._refresh_chart()
 
     def _set_card(self, symbol: str, label: str):
         for i in range(self._list.count()):

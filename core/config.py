@@ -13,8 +13,11 @@ LOG_FILE      = PROJECT_ROOT / "helion.log"
 DEFAULTS = {
     "app_name":         "HELION",
     "voice_enabled":    True,
+    "mic_enabled":      False,
     "voice_rate":       165,
     "voice_volume":     0.9,
+    "tts_engine":       "edge",
+    "tts_voice":        "en-US-GuyNeural",
     "memory_enabled":   True,
     "sprite_enabled":   False,
     "sprite_size":      140,

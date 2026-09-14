@@ -4,13 +4,15 @@ import html
 import re
 import threading
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QEvent
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame,
     QLabel, QPlainTextEdit, QPushButton, QTextBrowser,
 )
 
-from gui.theme import C, hex_pixmap
+from gui.theme import C
+from gui.hex_canvas import HexField, paint_hatch
 
 
 def _md_lite(text: str) -> str:
@@ -59,6 +61,45 @@ class Composer(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+class _WelcomeHost(QWidget):
+    """Forwards hover across the empty state so the hex tracks the mouse."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self._hex = None
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(C["bg"]))
+        paint_hatch(p, self)
+        p.end()
+        super().paintEvent(event)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseMove and self._hex is not None:
+            gp = event.globalPosition().toPoint()
+            self._hex.track_from_parent(self.mapFromGlobal(gp))
+        return super().eventFilter(obj, event)
+
+    def mouseMoveEvent(self, event):
+        if self._hex:
+            self._hex.track_from_parent(event.position().toPoint())
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        if self._hex:
+            self._hex._mx = 0.0
+            self._hex._my = 0.0
+        super().leaveEvent(event)
+
+    def watch_children(self):
+        self.setMouseTracking(True)
+        for child in self.findChildren(QWidget):
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+
 class ChatView(QWidget):
     status_changed = Signal(str)
 
@@ -89,8 +130,10 @@ class ChatView(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setMouseTracking(True)
 
         self._inner = QWidget()
+        self._inner.setMouseTracking(True)
         self._msgs = QVBoxLayout(self._inner)
         self._msgs.setContentsMargins(24, 28, 24, 16)
         self._msgs.setSpacing(12)
@@ -131,16 +174,15 @@ class ChatView(QWidget):
         root.addWidget(bar)
 
     def _welcome(self) -> QWidget:
-        box = QWidget()
+        box = _WelcomeHost()
         lay = QVBoxLayout(box)
         lay.setAlignment(Qt.AlignHCenter)
-        lay.setSpacing(12)
-        art = QLabel()
-        art.setAlignment(Qt.AlignCenter)
-        pix = hex_pixmap(320)
-        if not pix.isNull():
-            art.setPixmap(pix)
-        lay.addWidget(art)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(16)
+        art = HexField(box)
+        art.setFixedSize(440, 400)
+        box._hex = art
+        lay.addWidget(art, 0, Qt.AlignHCenter)
         eyebrow = QLabel("Helion")
         eyebrow.setObjectName("Eyebrow")
         eyebrow.setAlignment(Qt.AlignCenter)
@@ -149,6 +191,10 @@ class ChatView(QWidget):
         title.setObjectName("HeroTitle")
         title.setAlignment(Qt.AlignCenter)
         lay.addWidget(title)
+        sub = QLabel("Pick a model in Settings · Enter to send · Mic is optional")
+        sub.setObjectName("Eyebrow")
+        sub.setAlignment(Qt.AlignCenter)
+        lay.addWidget(sub)
         chips = QHBoxLayout()
         chips.setAlignment(Qt.AlignCenter)
         for label, prompt in (
@@ -162,6 +208,7 @@ class ChatView(QWidget):
             b.clicked.connect(lambda _=False, p=prompt: self.send_text(p))
             chips.addWidget(b)
         lay.addLayout(chips)
+        box.watch_children()
         return box
 
     def _hide_empty(self):
@@ -178,6 +225,9 @@ class ChatView(QWidget):
         clear_history()
         self._empty = self._welcome()
         self._msgs.insertWidget(0, self._column(self._empty))
+
+    def focus_composer(self):
+        self._composer.setFocus()
 
     def send_text(self, text: str):
         self._composer.setPlainText(text)
@@ -329,15 +379,11 @@ class ChatView(QWidget):
         from core.config import get
         if not get("voice_enabled", True) or not text:
             return
-        parts = text.split(". ")
-        spoken = ". ".join(parts[:2])
-        if len(spoken) > 220:
-            spoken = spoken[:220] + "…"
 
         def _go():
             try:
                 from core.speaker import speak
-                speak(spoken)
+                speak(text)
             except Exception:
                 pass
 

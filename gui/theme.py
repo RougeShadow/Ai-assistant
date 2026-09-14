@@ -6,6 +6,16 @@ from PySide6.QtGui import QIcon, QPixmap
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets" / "brand"
 HEX_PATH = ASSETS / "helion_hex.png"
+DECEPTICON_PATH = ASSETS / "decepticon.png"
+
+
+def hex_icon() -> QIcon:
+    path = DECEPTICON_PATH if DECEPTICON_PATH.exists() else HEX_PATH
+    if path.exists():
+        return QIcon(str(path))
+    pix = QPixmap(64, 64)
+    pix.fill("#0a0a0a")
+    return QIcon(pix)
 
 C = {
     "bg": "#0a0a0a",
@@ -23,14 +33,6 @@ C = {
     "red": "#f85149",
     "amber": "#f54e00",
 }
-
-
-def hex_icon() -> QIcon:
-    if HEX_PATH.exists():
-        return QIcon(str(HEX_PATH))
-    pix = QPixmap(64, 64)
-    pix.fill("#0a0a0a")
-    return QIcon(pix)
 
 
 def hex_pixmap(width: int = 280) -> QPixmap:
@@ -82,10 +84,11 @@ QLabel#Brand {
     padding: 4px 8px 0 8px;
     letter-spacing: 0.4px;
 }
-QLabel#Status {
-    color: #8a8a8a;
+QLabel#NavSection {
+    color: #5c5c5c;
     font-size: 11px;
-    padding: 0 12px 10px 12px;
+    padding: 14px 14px 4px 14px;
+    letter-spacing: 0.6px;
 }
 QFrame#TopBar {
     background: #0a0a0a;
@@ -119,6 +122,9 @@ QLabel#HeroTitle {
 }
 QScrollArea {
     border: none;
+    background: #0a0a0a;
+}
+QScrollArea > QWidget > QWidget {
     background: #0a0a0a;
 }
 QFrame#UserBubble {
@@ -182,6 +188,7 @@ QPushButton#Suggest {
 QPushButton#Suggest:hover {
     border-color: #f54e00;
     color: #fafafa;
+    background: #1a120e;
 }
 QLineEdit, QComboBox {
     background: #141414;

@@ -102,6 +102,87 @@ def _fetch_stock_news(symbol: str) -> str:
         return ""
 
 
+def get_chart_series(symbol: str, range_key: str = "5d") -> dict:
+    """OHLC + volume from Yahoo. range_key: 1d, 5d, 1mo."""
+    import urllib.request, urllib.parse, json as _json
+    symbol = symbol.upper().strip()
+    interval = {"1d": "5m", "5d": "15m", "1mo": "1h"}.get(range_key, "15m")
+    rng = range_key if range_key in ("1d", "5d", "1mo") else "5d"
+    encoded = urllib.parse.quote(symbol)
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval={interval}&range={rng}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=12) as r:
+        data = _json.loads(r.read())
+    result = data["chart"]["result"][0]
+    meta = result["meta"]
+    ts = result.get("timestamp") or []
+    quote = (result.get("indicators") or {}).get("quote") or [{}]
+    q = quote[0]
+    closes = q.get("close") or []
+    highs = q.get("high") or closes
+    lows = q.get("low") or closes
+    opens = q.get("open") or closes
+    vols = q.get("volume") or [0] * len(closes)
+    bars = []
+    for i, t in enumerate(ts):
+        c = closes[i] if i < len(closes) else None
+        if c is None:
+            continue
+        bars.append({
+            "t": t,
+            "o": opens[i] if i < len(opens) and opens[i] is not None else c,
+            "h": highs[i] if i < len(highs) and highs[i] is not None else c,
+            "l": lows[i] if i < len(lows) and lows[i] is not None else c,
+            "c": c,
+            "v": vols[i] if i < len(vols) and vols[i] is not None else 0,
+        })
+    profile = _volume_at_price(bars)
+    return {
+        "symbol": symbol,
+        "name": meta.get("shortName", symbol),
+        "price": meta.get("regularMarketPrice"),
+        "currency": meta.get("currency", "USD"),
+        "bars": bars,
+        "profile": profile,
+    }
+
+
+def _volume_at_price(bars: list) -> dict:
+    if not bars:
+        return {"buckets": [], "poc": None, "vah": None, "val": None}
+    prices = [b["c"] for b in bars]
+    lo, hi = min(prices), max(prices)
+    if hi <= lo:
+        return {"buckets": [{"price": lo, "vol": sum(b["v"] for b in bars)}], "poc": lo, "vah": hi, "val": lo}
+    n = 24
+    width = (hi - lo) / n
+    buckets = [{"price": lo + (i + 0.5) * width, "vol": 0.0} for i in range(n)]
+    for b in bars:
+        idx = int((b["c"] - lo) / width)
+        idx = max(0, min(n - 1, idx))
+        buckets[idx]["vol"] += b["v"] or 0
+    poc_i = max(range(n), key=lambda i: buckets[i]["vol"])
+    total = sum(x["vol"] for x in buckets) or 1
+    # 70% value area around POC
+    used = buckets[poc_i]["vol"]
+    left, right = poc_i, poc_i
+    while used / total < 0.70 and (left > 0 or right < n - 1):
+        lv = buckets[left - 1]["vol"] if left > 0 else -1
+        rv = buckets[right + 1]["vol"] if right < n - 1 else -1
+        if rv >= lv:
+            right += 1
+            used += buckets[right]["vol"]
+        else:
+            left -= 1
+            used += buckets[left]["vol"]
+    return {
+        "buckets": buckets,
+        "poc": buckets[poc_i]["price"],
+        "val": buckets[left]["price"],
+        "vah": buckets[right]["price"],
+    }
+
+
 def _get_portfolio(inp, _notify):
     from core.memory import get_portfolio_symbols
     portfolio = get_portfolio_symbols()

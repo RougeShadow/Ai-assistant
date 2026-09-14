@@ -1,0 +1,14 @@
+{
+  "app_name": "HELION",
+  "persona": "A calm, capable, loyal AI assistant.",
+  "voice_enabled": true,
+  "automation_enabled": false,
+  "web_enabled": false,
+  "memory_enabled": true,
+  "safe_mode": true,
+  "ui_theme": "dark",
+  "sprite_enabled": true,
+  "scheduler_enabled": true,
+  "logging": true,
+  "created": "2026-01-05T12:41:11.968620"
+}

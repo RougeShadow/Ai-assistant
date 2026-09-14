@@ -1,20 +1,25 @@
 # core/wakeword.py
 """
 Background wake word listener.
-Listens for the configured wake word and triggers the popup.
+Listens for the configured wake word and brings the app forward.
 """
 import threading, time
 from core.config import get
 from core.log import log
 
-_root    = None
-_active  = False
-_thread  = None
+_show_fn = None
+_active = False
+_thread = None
+
+
+def set_show_callback(fn):
+    global _show_fn
+    _show_fn = fn
 
 
 def set_root(root):
-    global _root
-    _root = root
+    """Legacy tkinter hook — ignored by the Qt app."""
+    _ = root
 
 
 def start():
@@ -86,9 +91,8 @@ def _on_wake():
     from core.speaker import speak
     state.set(State.LISTENING)
     speak("I'm here.")
-    if _root is not None:
+    if _show_fn is not None:
         try:
-            from gui.popup import open_popup
-            _root.after(0, lambda: open_popup(_root))
+            _show_fn()
         except Exception as e:
-            log.error(f"Failed to open popup: {e}")
+            log.error(f"Failed to show window: {e}")

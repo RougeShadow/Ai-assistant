@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 HELION — Desktop AI Assistant
-Claude-powered | Voice | Floating Sprite | Full System Access
 """
-
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 def main():
     from core.config import load_env
@@ -19,9 +18,9 @@ def main():
     from core.services import start_all
     start_all()
 
-    from gui.app import HelionApp
-    app = HelionApp()
-    app.run()
+    from gui.qt_app import run_app
+    sys.exit(run_app())
+
 
 if __name__ == "__main__":
     main()

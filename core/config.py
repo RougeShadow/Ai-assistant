@@ -16,12 +16,13 @@ DEFAULTS = {
     "voice_rate":       165,
     "voice_volume":     0.9,
     "memory_enabled":   True,
-    "sprite_enabled":   True,
+    "sprite_enabled":   False,
     "sprite_size":      140,
     "wake_word":        "arise",
     "theme":            "dark",
-    "llm_model":        "claude-sonnet-4-20250514",
-    "llm_max_tokens":   1024,
+    "llm_provider":     "groq",
+    "llm_model":        "qwen/qwen3.8-27b",
+    "llm_max_tokens":   2048,
 }
 
 _settings: dict = {}

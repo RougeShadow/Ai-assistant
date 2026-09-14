@@ -103,10 +103,10 @@ def _fetch_stock_news(symbol: str) -> str:
 
 
 def _get_portfolio(inp, _notify):
-    from core.memory import recall
-    portfolio = recall("portfolio", [])
+    from core.memory import get_portfolio_symbols
+    portfolio = get_portfolio_symbols()
     if not portfolio:
-        return "No portfolio saved. Say 'add AAPL to my portfolio' or 'track BTC-USD'."
+        return "No portfolio saved. Ask me to add a symbol, or use the Stocks page."
 
     results = []
     for symbol in portfolio:
@@ -334,18 +334,8 @@ def _generate_marketing(inp, _notify):
     }
 
     prompt = prompts.get(copy_type, prompts["tagline"])
-
-    try:
-        import anthropic, os
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        resp = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return resp.content[0].text.strip()
-    except Exception as e:
-        return f"Marketing generation failed: {e}"
+    from core.llm import complete_text
+    return complete_text(prompt, max_tokens=600)
 
 
 _DISPATCH = {

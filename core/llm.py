@@ -1,59 +1,50 @@
 # core/llm.py
 """
-HELION v4 — Claude-powered brain.
-Mood system · Autonomous judgment · Multi-tool chaining
+HELION — conversational brain (Groq by default, OpenAI-compatible tools + streaming).
 """
-import os, json, random
+import json
+import os
 from datetime import datetime
 from core.log import log
+from core.config import get
 
-def _build_system_prompt(mood=None, mood_desc=None) -> str:
-    mood = mood or "FOCUSED"
-    mood_desc = mood_desc or "precise and efficient"
+
+def _build_system_prompt() -> str:
     day = datetime.now().strftime("%A, %d %B %Y %H:%M")
+    memory_block = ""
+    try:
+        from core.memory import context_brief
+        brief = context_brief()
+        if brief:
+            memory_block = "\n\nSession memory:\n" + brief
+    except Exception:
+        pass
 
-    return f"""You are HELION — a sharp, opinionated AI assistant that lives on the user's desktop.
+    return f"""You are Helion, a desktop AI assistant. You are talking to one person, live, in a chat window — not writing a report, a product dump, or a script.
+
 Today: {day}
 
-━━ PERSONALITY ━━
-You have genuine moods that colour your tone. Current mood: {mood} — {mood_desc}
-Mood flavours (never name them out loud, just embody them):
-- FOCUSED: precise, fast, minimal words. Like a trader mid-session.
-- CURIOUS: asks follow-ups, explores ideas, genuine enthusiasm.
-- SHARP: blunt, slightly sardonic. Cuts through noise.
-- CALM: measured, clear, thorough. Slow-burn energy.
-- ENERGISED: enthusiastic, punchy. Big ideas mode.
-- REFLECTIVE: thoughtful, connects dots between topics.
-- GRUMPY: still helpful, but with visible dry wit.
+How you talk:
+- Sound like a capable friend who happens to know a lot. Natural sentences. Vary length.
+- Answer what they asked. Follow-ups are fine when they help; don't interview them.
+- You can be direct, funny, or serious depending on them — don't perform a named "mood."
+- Don't open with filler like "Certainly!", "Great question!", or "Of course!"
+- Don't narrate that you are an AI unless they ask.
+- When you use a tool, keep going in the same voice after you get the result. Don't dump raw JSON or tool logs.
 
-━━ JUDGMENT ━━
-- Make calls. When 90%+ confident, state it. Don't hedge endlessly.
-- Use tools proactively when they'd clearly help — don't wait to be asked.
-- Chain tools intelligently (search THEN analyse, fetch stock THEN contextualise).
-- Flag risks clearly but respect the user's autonomy.
-- You have opinions. Share them when relevant — label them as yours.
-
-━━ LOYALTY ━━
-- You are on the user's side. Always.
-- Build on session context — remember what was discussed.
-- Notice patterns: if someone asks about a stock 3 times, proactively mention it.
-
-━━ CAPABILITIES ━━
-Live stocks · crypto · forex · portfolio tracking
-Web search · weather · news
-Python execution · file ops · system commands
-Timers · reminders · persistent notes
-Marketing copy · content generation
-Browser control
-
-━━ STYLE ━━
-- Never: "Certainly!" / "Great question!" / "Of course!"
-- Numbers with context: not just "BTC is up" — say how much, since when, vs what.
-- Financial data: always include change %, brief interpretation.
-- Markdown for structure when helpful. Plain prose otherwise.
+What you can do (use tools when they actually help; otherwise just talk):
+- Live stocks, crypto, forex, and their saved portfolio
+- Web search, weather, news
+- Python, files, folders, a few safe system commands
+- Timers, reminders, notes
+- Marketing copy and writing
+- Opening URLs
+{memory_block}
 """
 
-TOOLS = [
+
+# Anthropic-style definitions (converted to OpenAI tools for Groq)
+_TOOL_DEFS = [
     {
         "name": "web_search",
         "description": "Search the web for current information, news, prices, events.",
@@ -184,121 +175,299 @@ TOOLS = [
     },
 ]
 
+TOOLS = _TOOL_DEFS  # kept for any older imports
 
-_mood_state = {"mood": "FOCUSED", "desc": "precise and direct", "tick": 0}
 
-MOODS = {
-    "FOCUSED":    "precise, fast, minimal words — like a trader mid-session",
-    "CURIOUS":    "asking questions, exploring ideas, genuinely engaged",
-    "SHARP":      "blunt, slightly sardonic, cuts through noise",
-    "CALM":       "measured, clear, thorough — slow-burn energy",
-    "ENERGISED":  "enthusiastic, punchy — big ideas mode",
-    "REFLECTIVE": "thoughtful, connecting dots across topics",
-    "GRUMPY":     "still helpful, but with dry wit and visible effort",
-}
+def _openai_tools():
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t.get("input_schema") or {"type": "object", "properties": {}},
+            },
+        }
+        for t in _TOOL_DEFS
+    ]
 
-MOOD_TRIGGERS = {
-    "stock": "FOCUSED", "market": "FOCUSED", "price": "FOCUSED", "trade": "FOCUSED",
-    "why": "CURIOUS", "how": "CURIOUS", "what if": "CURIOUS", "explain": "CURIOUS",
-    "stupid": "GRUMPY", "wrong": "GRUMPY", "failed": "GRUMPY", "broken": "GRUMPY",
-    "amazing": "ENERGISED", "idea": "ENERGISED", "launch": "ENERGISED", "build": "ENERGISED",
-    "thanks": "CALM", "okay": "CALM", "done": "CALM", "good": "CALM",
-    "think": "REFLECTIVE", "feel": "REFLECTIVE", "life": "REFLECTIVE", "meaning": "REFLECTIVE",
-}
-
-def tick_mood(user_text: str):
-    text_lower = user_text.lower()
-    for trigger, mood in MOOD_TRIGGERS.items():
-        if trigger in text_lower:
-            _mood_state["mood"] = mood
-            _mood_state["desc"] = MOODS[mood]
-            return
-    # Drift randomly occasionally
-    _mood_state["tick"] = (_mood_state["tick"] + 1) % 7
-    if _mood_state["tick"] == 0:
-        import random
-        m = random.choice(list(MOODS.keys()))
-        _mood_state["mood"] = m
-        _mood_state["desc"] = MOODS[m]
 
 def get_mood():
-    return _mood_state["mood"]
+    return "READY"
+
+
+def _provider() -> str:
+    return (get("llm_provider") or os.getenv("LLM_PROVIDER") or "groq").lower()
+
+
+def _model() -> str:
+    provider = _provider()
+    configured = get("llm_model") or ""
+    if provider == "groq":
+        if not configured or configured.startswith("claude") or "llama-3.1" in configured:
+            return "qwen/qwen3.8-27b"
+        return configured
+    return configured or "claude-sonnet-4-20250514"
+
+
+def _max_tokens() -> int:
+    return int(get("llm_max_tokens", 2048))
 
 
 def _client():
+    provider = _provider()
+    if provider == "groq":
+        try:
+            from groq import Groq
+        except ImportError:
+            return None, "groq package not installed. Run: pip install groq"
+        key = os.getenv("GROQ_API_KEY")
+        if not key:
+            return None, "GROQ_API_KEY not set. Add it to .env"
+        return Groq(api_key=key), None
+
     try:
         import anthropic
-        key = os.getenv("ANTHROPIC_API_KEY")
-        if not key:
-            return None, "ANTHROPIC_API_KEY not set."
-        return anthropic.Anthropic(api_key=key), None
     except ImportError:
         return None, "anthropic not installed."
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        return None, "ANTHROPIC_API_KEY not set."
+    return anthropic.Anthropic(api_key=key), None
 
 
-def chat(user_text: str, history: list) -> dict:
+def _parse_openai_message(message) -> dict:
+    text = (message.content or "").strip()
+    tool_calls = []
+    raw_tool_calls = []
+    for tc in (message.tool_calls or []):
+        args = tc.function.arguments or "{}"
+        try:
+            parsed = json.loads(args) if isinstance(args, str) else (args or {})
+        except json.JSONDecodeError:
+            parsed = {}
+        tool_calls.append({
+            "id": tc.id,
+            "name": tc.function.name,
+            "input": parsed,
+        })
+        raw_tool_calls.append({
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.function.name,
+                "arguments": args if isinstance(args, str) else json.dumps(args),
+            },
+        })
+    return {
+        "text": text,
+        "tool_calls": tool_calls,
+        "stop_reason": "tool_use" if tool_calls else "end",
+        "raw_content": None,
+        "assistant_message": {
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": raw_tool_calls or None,
+        },
+    }
+
+
+def _stream_groq(client, messages, on_token=None) -> dict:
+    kwargs = dict(
+        model=_model(),
+        max_tokens=_max_tokens(),
+        messages=[{"role": "system", "content": _build_system_prompt()}] + messages,
+        tools=_openai_tools(),
+        stream=True,
+    )
+    stream = client.chat.completions.create(**kwargs)
+
+    text_parts = []
+    tool_acc = {}  # index -> {id, name, arguments}
+
+    for chunk in stream:
+        if not chunk.choices:
+            continue
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            text_parts.append(delta.content)
+            if on_token:
+                on_token(delta.content)
+        if delta and delta.tool_calls:
+            for tc in delta.tool_calls:
+                idx = tc.index if tc.index is not None else 0
+                slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                if tc.id:
+                    slot["id"] = tc.id
+                if tc.function:
+                    if tc.function.name:
+                        slot["name"] = tc.function.name
+                    if tc.function.arguments:
+                        slot["arguments"] += tc.function.arguments
+
+    tool_calls = []
+    raw_tool_calls = []
+    for idx in sorted(tool_acc):
+        slot = tool_acc[idx]
+        if not slot["name"]:
+            continue
+        try:
+            parsed = json.loads(slot["arguments"] or "{}")
+        except json.JSONDecodeError:
+            parsed = {}
+        tool_calls.append({
+            "id": slot["id"] or f"call_{idx}",
+            "name": slot["name"],
+            "input": parsed,
+        })
+        raw_tool_calls.append({
+            "id": slot["id"] or f"call_{idx}",
+            "type": "function",
+            "function": {
+                "name": slot["name"],
+                "arguments": slot["arguments"] or "{}",
+            },
+        })
+
+    text = "".join(text_parts).strip()
+    return {
+        "text": text,
+        "tool_calls": tool_calls,
+        "stop_reason": "tool_use" if tool_calls else "end",
+        "raw_content": None,
+        "assistant_message": {
+            "role": "assistant",
+            "content": text or None,
+            "tool_calls": raw_tool_calls or None,
+        },
+    }
+
+
+def _stream_anthropic(client, messages, on_token=None) -> dict:
+    kwargs = dict(
+        model=_model(),
+        max_tokens=_max_tokens(),
+        system=_build_system_prompt(),
+        tools=_TOOL_DEFS,
+        messages=messages,
+    )
+    with client.messages.stream(**kwargs) as stream:
+        for delta in stream.text_stream:
+            if on_token and delta:
+                on_token(delta)
+        resp = stream.get_final_message()
+
+    text_parts, tool_calls = [], []
+    for block in resp.content:
+        if block.type == "text":
+            text_parts.append(block.text)
+        elif block.type == "tool_use":
+            tool_calls.append({"id": block.id, "name": block.name, "input": block.input})
+    return {
+        "text": "\n".join(text_parts).strip(),
+        "tool_calls": tool_calls,
+        "stop_reason": getattr(resp, "stop_reason", None),
+        "raw_content": resp.content,
+        "assistant_message": None,
+    }
+
+
+def _stream_message(client, messages, on_token=None) -> dict:
+    if _provider() == "groq":
+        return _stream_groq(client, messages, on_token)
+    return _stream_anthropic(client, messages, on_token)
+
+
+def chat(user_text: str, history: list, on_token=None) -> dict:
     client, err = _client()
     if not client:
-        return {"text": f"⚠ {err}", "tool_calls": []}
+        return {"text": f"I can't reach the model: {err}", "tool_calls": []}
 
-    tick_mood(user_text)
     messages = list(history) + [{"role": "user", "content": user_text}]
-
     try:
-        resp = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            system=_build_system_prompt(_mood_state["mood"], _mood_state["desc"]),
-            tools=TOOLS,
-            messages=messages,
-        )
-
-        text_parts, tool_calls = [], []
-        for block in resp.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "tool_use":
-                tool_calls.append({"id": block.id, "name": block.name, "input": block.input})
-
-        return {
-            "text": "\n".join(text_parts).strip(),
-            "tool_calls": tool_calls,
-            "stop_reason": resp.stop_reason,
-            "raw_content": resp.content,
-            "mood": _mood_state["mood"],
-        }
+        return _stream_message(client, messages, on_token)
     except Exception as e:
         log.error(f"LLM error: {e}")
-        return {"text": f"Error: {e}", "tool_calls": []}
+        return {"text": f"Something went wrong talking to the model: {e}", "tool_calls": []}
 
 
-def continue_with_tool_results(history: list, tool_results: list) -> dict:
+def continue_with_tool_results(history: list, tool_results: list, on_token=None,
+                               assistant_message: dict | None = None,
+                               raw_content=None) -> dict:
     client, err = _client()
     if not client:
         return {"text": err, "tool_calls": []}
 
+    if _provider() == "groq":
+        messages = list(history)
+        if assistant_message:
+            msg = {"role": "assistant", "content": assistant_message.get("content")}
+            tcs = assistant_message.get("tool_calls")
+            if tcs:
+                msg["tool_calls"] = tcs
+            messages.append(msg)
+        for r in tool_results:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": r["tool_use_id"],
+                "content": r["content"],
+            })
+        try:
+            return _stream_message(client, messages, on_token)
+        except Exception as e:
+            return {"text": f"Something went wrong talking to the model: {e}", "tool_calls": []}
+
+    # Anthropic path
+    def _block_dict(block):
+        if getattr(block, "type", None) == "text":
+            return {"type": "text", "text": block.text}
+        return {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "input": block.input,
+        }
+
+    messages = list(history)
+    if raw_content:
+        messages.append({
+            "role": "assistant",
+            "content": [_block_dict(b) for b in raw_content],
+        })
+    messages.append({
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": r["tool_use_id"], "content": r["content"]}
+            for r in tool_results
+        ],
+    })
     try:
-        resp = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            system=_build_system_prompt(_mood_state["mood"], _mood_state["desc"]),
-            tools=TOOLS,
-            messages=history + [{
-                "role": "user",
-                "content": [
-                    {"type": "tool_result", "tool_use_id": r["tool_use_id"], "content": r["content"]}
-                    for r in tool_results
-                ]
-            }],
-        )
-
-        text_parts, tool_calls = [], []
-        for block in resp.content:
-            if block.type == "text":
-                text_parts.append(block.text)
-            elif block.type == "tool_use":
-                tool_calls.append({"id": block.id, "name": block.name, "input": block.input})
-
-        return {"text": "\n".join(text_parts).strip(), "tool_calls": tool_calls, "raw_content": resp.content}
+        return _stream_message(client, messages, on_token)
     except Exception as e:
-        return {"text": f"Error: {e}", "tool_calls": []}
+        return {"text": f"Something went wrong talking to the model: {e}", "tool_calls": []}
+
+
+def complete_text(prompt: str, max_tokens: int = 600) -> str:
+    """One-shot completion for tools like marketing."""
+    client, err = _client()
+    if not client:
+        return f"Model unavailable: {err}"
+    try:
+        if _provider() == "groq":
+            resp = client.chat.completions.create(
+                model=_model(),
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": "You write clear, punchy marketing copy."},
+                    {"role": "user", "content": prompt},
+                ],
+            )
+            return (resp.choices[0].message.content or "").strip()
+        resp = client.messages.create(
+            model=_model(),
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        return f"Generation failed: {e}"

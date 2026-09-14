@@ -50,9 +50,27 @@ def push(role: str, content: str):
             _mem["history"] = _mem["history"][-200:]
         _save(_mem)
 
-def history(n=20) -> list:
+def history(n=40) -> list:
     raw = _mem["history"][-n:]
     return [{"role": m["role"], "content": m["content"]} for m in raw]
+
+
+def context_brief() -> str:
+    """Short memory digest for the system prompt."""
+    parts = []
+    facts = _mem.get("facts") or {}
+    if facts:
+        bits = [f"{k}: {v}" for k, v in list(facts.items())[:16]]
+        parts.append("Things you know about the user: " + "; ".join(bits))
+    portfolio = _mem.get("portfolio") or []
+    if portfolio:
+        parts.append("Watchlist / portfolio: " + ", ".join(portfolio))
+    notes = _mem.get("notes") or []
+    if notes:
+        recent = [n.get("text", "")[:120] for n in notes[-5:] if n.get("text")]
+        if recent:
+            parts.append("Recent notes: " + " | ".join(recent))
+    return "\n".join(parts)
 
 def clear_history():
     with _lock:

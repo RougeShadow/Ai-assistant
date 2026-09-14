@@ -1,0 +1,12 @@
+.env
+apikey.env
+*.key
+helion_memory.json
+helion_memory.enc
+helion_settings.json
+helion.log
+memory_backups/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
